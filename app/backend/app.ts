@@ -45,11 +45,22 @@ async function reset(account: string): Promise<void> {
 async function charge(account: string, charges: number): Promise<ChargeResult> {
     const client = await connect();
     try {
-        var result = await client.setNX(account, "true");
+        var expireLimit = 5000;
+        var lockExpireTime = Date.now() + expireLimit;
+        var result = await client.setNX(account, lockExpireTime.toString());
         console.log("result:" + result);
         while(result == false) {
             await new Promise(r => setTimeout(r, 1));
-            result = await client.setNX(account, "true");
+            var expireTime =  parseInt((await client.get(account) ?? "0"));
+            if (expireTime < Date.now()) {
+                // This is required in case some process with lock dies before releasing the lock.
+                var lockTime = await client.getSet(account, (Date.now() + expireLimit).toString());
+                if(lockTime == null || parseInt(lockTime) < Date.now()) {
+                    result = true;
+                }
+            } else {
+                result = await client.setNX(account, "true");
+            }
         }
         const balance = parseInt((await client.get(`${account}/balance`)) ?? "");
         if (balance >= charges) {
